@@ -6,6 +6,22 @@ import { uploadOnCloudinary } from "../utils/cloudinary.js"
 
 import { ApiResponse } from "../utils/ApiResponse.js"
 
+const generateAccessAndrefreshToken = async (userId) => {
+    try {
+        const user = await User.findById(userId);
+        const accessToken = user.generateAccessToken()
+        const refreshToken = user.generaterefreshToken()
+        user.refreshToken = refreshToken;
+        await user.save({ validateBeforeSave: false })
+        //as password required will going to be kick in as in the defined model on save.
+        return { accessToken, refreshToken }
+
+    } catch (error) {
+        throw new ApiError(500, "Something went wrong while generating refersh and access token")
+    }
+}
+
+
 const registerUser = asyncHandler(async (req, res) => {
 
     const { username, fullname, email, password } = req.body;
@@ -50,7 +66,7 @@ const registerUser = asyncHandler(async (req, res) => {
     })
 
     const createdUser = await User.findById(user._id).select(
-        "-password -refereshToken "
+        "-password -refreshToken "
     )
     if (!createdUser) {
         throw new ApiError(500, "Something went wrong while registering th4eser")
@@ -62,4 +78,83 @@ const registerUser = asyncHandler(async (req, res) => {
     )
 })
 
-export { registerUser }
+const loginUser = asyncHandler(async (req, res) => {
+    //req.body->data
+    // check username or email
+    //find the user
+    //password check
+
+    //access and refresh token(generate karo on the basis of the userId 
+    // kuki us user ke liye hi to generate kar rahe hai because after 
+    // generation- authorization, looking up the status of the user whether he is login or not 
+    // and also to trak his movement )
+
+
+    //send cookie mein in token ko
+
+    const { username, email, password } = req.body;
+    if (!username || !email) {
+        throw new ApiError(400, "username or password is required")
+    }
+
+    const user = await User.findOne({
+        $or: [{ username, email }]
+    })
+
+    if (!user) {
+        throw new ApiError(404, 'User does not exist')
+    }
+    const isPasswordValid = await user.isPasswordCorrect(password);
+
+    if (!isPasswordValid) {
+        throw new ApiError(401, 'Invalid user credentails')
+    }
+
+    const { accessToken, refreshToken } = await generateAccessAndrefreshToken(user._id)
+
+    const loggedInUser = await User.findById(user._id).select("-password -refreshToken")
+    const options = {
+        httpOnly: true,
+        secured: true,
+
+    }
+    return res
+        .status(200)
+        .cookie("accessToken", accessToken, options)
+        .cookie("refreshToken", refreshToken, options)
+        .json(new ApiResponse(200,
+            {
+                user: loggedInUser, accessToken, refreshToken
+            },
+            "User logged IN SuccessFully"
+        ))
+})
+
+const logoutUser = asyncHandler(async (req, res) => {
+    await User.findByIdAndUpdate(
+        req.user._id,
+        {
+            $set: {
+                refreshToken: undefined
+            }
+        }, {
+        new: true
+    }
+    )
+    const options = {
+        httpOnly: true,
+        secured: true,
+    }
+    return res.status(200)
+        .clearCookie('accessToken', options)
+        .clearCookie("refreshToken", options)
+        .json(new ApiResponse(200, {}, 'User logged out'))
+})
+
+
+
+
+
+
+
+export { registerUser, loginUser, logoutUser }
